@@ -1,10 +1,8 @@
-﻿Imports System.Net.Sockets
-
-Public Class Connect4
+﻿Public Class Connect4
     Dim Rows As Integer = 6
     Dim Columns As Integer = 7
     Dim Board(Rows - 1, Columns - 1) As (Boolean, Boolean)
-    Dim Table() As (Integer, Integer) 'later
+    Dim Table As New Dictionary(Of Object, Object) 'later
     Dim CurrentPlayer As Integer = 1
 
     Private Sub Connect4_Load(sender As Object, e As EventArgs) Handles MyBase.Load
@@ -24,7 +22,7 @@ Public Class Connect4
     End Sub
 
     Private Sub BtnDone_Click(sender As Object, e As EventArgs) Handles BtnDone.Click
-        End
+        Me.Close()
     End Sub
 
     Sub InitializeBoard()
@@ -50,9 +48,11 @@ Public Class Connect4
                 row = cell.Top \ 64
                 col = cell.Left \ 64
 
-                If Board(row, col).Item1 Then
+                If Board(row, col).Item1 And Board(row, col).Item2 Then
+                    MsgBox("Error")
+                ElseIf Board(row, col).Item1 Then
                     cell.Image = Image.FromFile("red.png")
-                ElseIf Board(row, col).item2 Then
+                ElseIf Board(row, col).Item2 Then
                     cell.Image = Image.FromFile("yellow.png")
                 Else
                     cell.Image = Image.FromFile("white.png")
@@ -65,27 +65,17 @@ Public Class Connect4
         Dim clickedCell As PictureBox = DirectCast(sender, PictureBox)
         Dim column As Integer = clickedCell.Left \ 64
 
-        If DropPiece(column, True, Board) Then
+        If DropPiece(column, CurrentPlayer = 1, Board) Then
             Call DrawBoard()
 
-            If CheckWin(Board, True) Then
-                MsgBox("Red wins!")
+            If CheckWin(Board, CurrentPlayer = 1) Then
+                Call DrawBoard()
+                MsgBox(If(CurrentPlayer = 1, "Red wins!", "Yellow wins!"))
                 Call InitializeBoard()
                 Exit Sub
-            Else
-                'If CurrentPlayer = 1 Then
-                '    CurrentPlayer = 2
-
-                '    lblTurn.Text = "Yellow's Turn"
-                'Else
-                '    CurrentPlayer = 1
-
-                '    lblTurn.Text = "Red's Turn"
-                'End If
             End If
 
             If chkComp.Checked Then
-                Call DrawBoard()
                 Call Comp()
                 Call DrawBoard()
 
@@ -117,11 +107,11 @@ Public Class Connect4
         depth = Val(txtDepth.Text)
 
         For col As Integer = 0 To Columns - 1
-            If Board(0, col) = 0 Then
+            If Not (Board(0, col).Item1 Or Board(0, col).Item2) Then 'oop
                 row = GetDropRow(col, Board)
-                Board(row, col) = 2
+                Board(row, col).Item2 = True
                 score = Alphabeta(Board, depth, Integer.MinValue, Integer.MaxValue, True)
-                Board(row, col) = 0
+                Board(row, col).Item2 = False
 
                 If score < minScore Then
                     minScore = score
@@ -135,8 +125,10 @@ Public Class Connect4
         End If
     End Sub
 
-    Function Alphabeta(node(,) As Integer, depth As Integer, alpha As Integer, beta As Integer, maximizingPlayer As Boolean) As Integer
+    Function Alphabeta(node(,) As (Boolean, Boolean), depth As Integer, alpha As Integer, beta As Integer, maximizingPlayer As Boolean) As Integer
         Dim value, row As Integer
+
+        'If Table.ContainsKey
 
         If depth = 0 Then
             Return EvaluateBoard(node)
@@ -158,14 +150,14 @@ Public Class Connect4
             value = Integer.MinValue
 
             For col As Integer = 0 To Columns - 1
-                If node(0, col) = 0 Then
+                If Not (node(0, col).Item1 Or node(0, col).Item2) Then
                     row = GetDropRow(col, node)
 
-                    node(row, col) = 1
+                    node(row, col).Item1 = True
 
                     value = Math.Max(value, Alphabeta(node, depth - 1, alpha, beta, False))
 
-                    node(row, col) = 0
+                    node(row, col).Item1 = False
 
                     alpha = Math.Max(alpha, value)
 
@@ -180,14 +172,14 @@ Public Class Connect4
             value = Integer.MaxValue
 
             For col As Integer = 0 To Columns - 1
-                If node(0, col) = 0 Then
+                If Not (node(0, col).Item1 Or node(0, col).Item2) Then
                     row = GetDropRow(col, node)
 
-                    node(row, col) = 2
+                    node(row, col).Item2 = True
 
                     value = Math.Min(value, Alphabeta(node, depth - 1, alpha, beta, True))
 
-                    node(row, col) = 0
+                    node(row, col).Item2 = False
 
                     beta = Math.Min(beta, value)
 
@@ -201,28 +193,34 @@ Public Class Connect4
         End If
     End Function
 
-    Function GetDropRow(column As Integer, node(,) As Integer) As Integer
+    Function GetDropRow(column As Integer, node(,) As (Boolean, Boolean)) As Integer
         For row As Integer = Rows - 1 To 0 Step -1
-            If node(row, column) = 0 Then
+            If Not (node(row, column).Item1 Or node(row, column).Item2) Then 'oop
                 Return row
             End If
         Next
         Return -1
     End Function
 
-    Function EvaluateBoard(node(,) As Integer) As Integer
+    Function EvaluateBoard(node(,) As (Boolean, Boolean)) As Integer
+        If Table.ContainsKey(node) Then
+            Return Table(node)
+        End If
+
         Dim score As Integer = 0
         For row As Integer = 0 To Rows - 1
             For col As Integer = 0 To Columns - 1
-                If node(row, col) <> 0 Then
+                If Not (node(row, col).Item1 Or node(row, col).Item1) Then
                     score += EvaluatePosition(row, col, node)
                 End If
             Next
         Next
+
+        Table.Add(node, score)
         Return score
     End Function
 
-    Function EvaluatePosition(row As Integer, col As Integer, node(,) As Integer) As Integer
+    Function EvaluatePosition(row As Integer, col As Integer, node(,) As (Boolean, Boolean)) As Integer
         Dim score, count, r, c As Integer
         Dim directions As (Integer, Integer)() = {(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)}
 
@@ -233,12 +231,12 @@ Public Class Connect4
                 c = col + j * dire.Item2
 
                 If r >= 0 AndAlso r < Rows AndAlso c >= 0 AndAlso c < Columns Then
-                    If node(r, c) = 1 Then
+                    If node(r, c).Item1 Then
                         count += 1
-                    ElseIf node(r, c) = 2 Then
+                    ElseIf node(r, c).Item2 Then
                         count = 0
                         Exit For
-                    ElseIf node(r, c) = 0 Then
+                    Else
                         Exit For
                     End If
                 Else
@@ -255,9 +253,9 @@ Public Class Connect4
                 c = col + j * dire.Item2
 
                 If r >= 0 AndAlso r < Rows AndAlso c >= 0 AndAlso c < Columns Then
-                    If node(r, c) = 2 Then
+                    If node(r, c).Item2 Then
                         count += 1
-                    ElseIf node(r, c) = 1 Then
+                    ElseIf node(r, c).Item1 Then
                         count = 0
                         Exit For
                     End If
@@ -275,7 +273,7 @@ Public Class Connect4
 
     Function DropPiece(column As Integer, maximizingPlayer As Boolean, node(,) As (Boolean, Boolean)) As Boolean
         For row As Integer = Rows - 1 To 0 Step -1
-            If Not node(row, column).Item1 And Not node(row, column).Item2 Then 'oop
+            If Not (node(row, column).Item1 Or node(row, column).Item2) Then 'oop
                 If maximizingPlayer Then
                     node(row, column).Item1 = True
                 Else
@@ -289,9 +287,9 @@ Public Class Connect4
         Return False
     End Function
 
-    Function CheckTie(node(,) As Integer) As Boolean
+    Function CheckTie(node(,) As (Boolean, Boolean)) As Boolean
         For col As Integer = 0 To Columns - 1
-            If node(0, col) = 0 Then
+            If Not (node(0, col).Item1 Or node(0, col).Item2) Then
                 Return False
             End If
         Next
@@ -299,46 +297,53 @@ Public Class Connect4
     End Function
 
     Function CheckWin(node(,) As (Boolean, Boolean), maximizingPlayer As Boolean) As Boolean
+        If Table.ContainsKey({node, maximizingPlayer}) Then
+            Return Table({node, maximizingPlayer})
+        End If
         For row As Integer = 0 To Rows - 1
             For col As Integer = 0 To Columns - 1
-                If Not node(row, col).Item1 And Not node(row, col).Item2 Then 'oop
+                If If(maximizingPlayer, node(row, col).Item1, node(row, col).Item2) Then 'oop
                     If CheckDirection(row, col, 1, 0, node, maximizingPlayer) Then
+                        Table.Add({node, maximizingPlayer}, True)
                         Return True
                     End If
 
                     If CheckDirection(row, col, 0, 1, node, maximizingPlayer) Then
+                        Table.Add({node, maximizingPlayer}, True)
                         Return True
                     End If
 
                     If CheckDirection(row, col, 1, 1, node, maximizingPlayer) Then
+                        Table.Add({node, maximizingPlayer}, True)
                         Return True
                     End If
 
                     If CheckDirection(row, col, 1, -1, node, maximizingPlayer) Then
+                        Table.Add({node, maximizingPlayer}, True)
                         Return True
                     End If
                 End If
             Next
         Next
+        Table.Add({node, maximizingPlayer}, False)
         Return False
     End Function
 
-    Function CheckDirection(row As Integer, col As Integer, dRow As Integer, dCol As Integer, node(,) As Integer, maximizingPlayer As Boolean) As Boolean
+    Function CheckDirection(row As Integer, col As Integer, dRow As Integer, dCol As Integer, node(,) As (Boolean, Boolean), maximizingPlayer As Boolean) As Boolean
         Dim count As Integer = 0
-        Dim player As Integer = If(maximizingPlayer = True, 1, 2)
         Dim r, c As Integer
 
-        For i As Integer = 0 To 3
+        For i As Integer = 1 To 3
             r = row + i * dRow
             c = col + i * dCol
 
-            If r >= 0 AndAlso r < Rows AndAlso c >= 0 AndAlso c < Columns AndAlso node(r, c) = player Then
+            If r >= 0 AndAlso r < Rows AndAlso c >= 0 AndAlso c < Columns AndAlso If(maximizingPlayer, node(r, c).Item1, node(r, c).Item2) = True Then
                 count += 1
             Else
                 Exit For
             End If
         Next
 
-        Return count = 4
+        Return count = 3
     End Function
 End Class
