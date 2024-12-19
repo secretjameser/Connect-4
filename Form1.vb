@@ -2,6 +2,7 @@
     Dim Rows As Integer = 6
     Dim Columns As Integer = 7
     Dim Board(Rows - 1, Columns - 1) As (Boolean, Boolean)
+    Dim Table As Dictionary(Of Object, Object)
     Dim CurrentPlayer As Integer = 1
 
     Private Sub Connect4_Load(sender As Object, e As EventArgs) Handles MyBase.Load
@@ -38,7 +39,7 @@
         Call DrawBoard()
     End Sub
 
-    Sub DrawBoard() 'CHANGE?
+    Sub DrawBoard()
         Dim cell As PictureBox
         Dim row, col As Integer
         For Each control As Control In Me.Controls
@@ -99,34 +100,53 @@
         End If
     End Sub
 
-    Sub Comp() 'NEEDS UPDATE
-        Dim x, minScore, row, score, depth As Integer
-        x = -1
-        minScore = Integer.MaxValue
-        depth = Val(txtDepth.Text)
+    Sub Comp()
+        Dim x As Integer = -1
+        Dim timeLimit As Double = Val(txtDepth.Text)
 
-        For col As Integer = 0 To Columns - 1
-            If Not (Board(0, col).Item1 Or Board(0, col).Item2) Then 'oop
-                row = GetDropRow(col, Board)
-                Board(row, col).Item2 = True
-                score = Alphabeta(Board, depth, Integer.MinValue, Integer.MaxValue, True)
-                Board(row, col).Item2 = False
-
-                If score < minScore Then
-                    minScore = score
-                    x = col
-                End If
-            End If
-        Next
+        x = IterativeDeepening(Board, timeLimit)
 
         If x >= 0 Then
             DropPiece(x, False, Board)
         End If
     End Sub
 
+    Function IterativeDeepening(node(,) As (Boolean, Boolean), timeLimit As Double) As Integer
+        Dim bestMove As Integer = -1
+        Dim startTime As DateTime = DateTime.Now
+
+        Dim depth As Integer = 1
+        Do While (DateTime.Now - startTime).TotalSeconds < timeLimit
+            bestMove = DepthLimitedSearch(node, depth)
+            depth += 1
+        Loop
+
+        Return bestMove
+    End Function
+
+    Function DepthLimitedSearch(node(,) As (Boolean, Boolean), depth As Integer) As Integer
+        Dim bestMove As Integer = -1
+        Dim maxScore As Integer = Integer.MinValue
+
+        For col As Integer = 0 To Columns - 1
+            If Not (node(0, col).Item1 Or node(0, col).Item2) Then
+                Dim row As Integer = GetDropRow(col, node)
+                node(row, col).Item2 = True
+                Dim score As Integer = Alphabeta(node, depth, Integer.MinValue, Integer.MaxValue, True)
+                node(row, col).Item2 = False
+
+                If score > maxScore Then
+                    maxScore = score
+                    bestMove = col
+                End If
+            End If
+        Next
+
+        Return bestMove
+    End Function
+
     Function Alphabeta(node(,) As (Boolean, Boolean), depth As Integer, alpha As Integer, beta As Integer, maximizingPlayer As Boolean) As Integer
         Dim value, row As Integer
-
 
         If depth = 0 Then
             Return EvaluateBoard(node)
@@ -164,8 +184,6 @@
                     End If
                 End If
             Next
-
-            Return value
         Else
             value = Integer.MaxValue
 
@@ -186,9 +204,9 @@
                     End If
                 End If
             Next
-
-            Return value
         End If
+
+        Return value
     End Function
 
     Function GetDropRow(column As Integer, node(,) As (Boolean, Boolean)) As Integer
