@@ -4,6 +4,9 @@
     Dim Board(Rows - 1, Columns - 1) As (Boolean, Boolean)
     Dim Table As Dictionary(Of Object, Object)
     Dim CurrentPlayer As Integer = 1
+    Dim CancellationTokenSource As New Threading.CancellationTokenSource()
+
+    Private ReadOnly BoardLock As New Object()
 
     Private Sub Connect4_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         Randomize()
@@ -18,39 +21,40 @@
     End Sub
 
     Private Sub BtnNew_Click(sender As Object, e As EventArgs) Handles BtnNew.Click
+        CancellationTokenSource.Cancel()
+        CancellationTokenSource = New Threading.CancellationTokenSource()
         Call InitializeBoard()
     End Sub
 
     Private Sub BtnDone_Click(sender As Object, e As EventArgs) Handles BtnDone.Click
+        CancellationTokenSource.Cancel()
         Me.Close()
     End Sub
 
     Sub InitializeBoard()
         CurrentPlayer = 1
-
         lblTurn.Text = "Red's Turn"
 
-        For row As Integer = 0 To Rows - 1
-            For col As Integer = 0 To Columns - 1
-                Board(row, col) = (False, False)
+            For row As Integer = 0 To Rows - 1
+                For col As Integer = 0 To Columns - 1
+                    Board(row, col) = (False, False)
+                Next
             Next
-        Next
 
         Call DrawBoard()
     End Sub
 
     Sub DrawBoard()
-        Dim cell As PictureBox
-        Dim row, col As Integer
+        ' Create a list to hold all update tasks
+        Dim updateTasks As New List(Of Task)
+
         For Each control As Control In Me.Controls
             If TypeOf control Is PictureBox Then
-                cell = DirectCast(control, PictureBox)
-                row = cell.Top \ 64
-                col = cell.Left \ 64
+                Dim cell As PictureBox = DirectCast(control, PictureBox)
+                Dim row As Integer = cell.Top \ 64
+                Dim col As Integer = cell.Left \ 64
 
-                If Board(row, col).Item1 And Board(row, col).Item2 Then
-                    MsgBox("Error")
-                ElseIf Board(row, col).Item1 Then
+                If Board(row, col).Item1 Then
                     cell.Image = Image.FromFile("red.png")
                 ElseIf Board(row, col).Item2 Then
                     cell.Image = Image.FromFile("yellow.png")
@@ -59,16 +63,19 @@
                 End If
             End If
         Next
+
+        ' Wait for all updates to complete
+        Task.WaitAll(updateTasks.ToArray())
     End Sub
 
-    Sub Cell_Click(sender As Object, e As EventArgs)
+    Async Sub Cell_Click(sender As Object, e As EventArgs)
         Dim clickedCell As PictureBox = DirectCast(sender, PictureBox)
         Dim column As Integer = clickedCell.Left \ 64
 
-        If DropPiece(column, CurrentPlayer = 1, Board) Then
+        If Await Task.Run(Function() DropPiece(column, CurrentPlayer = 1, Board)) Then
             Call DrawBoard()
 
-            If CheckWin(Board, CurrentPlayer = 1) Then
+            If Await Task.Run(Function() CheckWin(Board, CurrentPlayer = 1)) Then
                 Call DrawBoard()
                 MsgBox(If(CurrentPlayer = 1, "Red wins!", "Yellow wins!"))
                 Call InitializeBoard()
@@ -76,76 +83,101 @@
             End If
 
             If chkComp.Checked Then
-                Call Comp()
+                Await CompAsync()
                 Call DrawBoard()
 
-                If CheckWin(Board, False) Then
+                If Await Task.Run(Function() CheckWin(Board, False)) Then
                     lblTurn.Text = "Yellow's Turn"
                     MsgBox("Yellow wins!")
                     Call InitializeBoard()
                     Exit Sub
                 End If
-
             Else
-                If CurrentPlayer = 1 Then
-                    CurrentPlayer = 2
-
-                    lblTurn.Text = "Yellow's Turn"
-                Else
-                    CurrentPlayer = 1
-
-                    lblTurn.Text = "Red's Turn"
-                End If
+                SyncLock BoardLock
+                    If CurrentPlayer = 1 Then
+                        CurrentPlayer = 2
+                        lblTurn.Text = "Yellow's Turn"
+                    Else
+                        CurrentPlayer = 1
+                        lblTurn.Text = "Red's Turn"
+                    End If
+                End SyncLock
             End If
         End If
     End Sub
 
-    Sub Comp()
+    Async Function CompAsync() As Task
         Dim x As Integer = -1
         Dim timeLimit As Double = Val(txtDepth.Text)
 
-        x = IterativeDeepening(Board, timeLimit)
+        ' Run the AI computation in a background task
+        x = Await Task.Run(Function()
+                               Return IterativeDeepening(Board, timeLimit, CancellationTokenSource.Token)
+                           End Function)
 
         If x >= 0 Then
-            DropPiece(x, False, Board)
+            SyncLock BoardLock
+                DropPiece(x, False, Board)
+            End SyncLock
         End If
-    End Sub
+    End Function
 
-    Function IterativeDeepening(node(,) As (Boolean, Boolean), timeLimit As Double) As Integer
+    Function IterativeDeepening(node(,) As (Boolean, Boolean), timeLimit As Double,
+                              cancellationToken As Threading.CancellationToken) As Integer
         Dim bestMove As Integer = -1
         Dim startTime As DateTime = DateTime.Now
 
         Dim depth As Integer = 1
-        Do While (DateTime.Now - startTime).TotalSeconds < timeLimit
-            bestMove = DepthLimitedSearch(node, depth)
+        Do While (DateTime.Now - startTime).TotalSeconds < timeLimit AndAlso
+                 Not cancellationToken.IsCancellationRequested
+            bestMove = DepthLimitedSearch(node, depth, cancellationToken)
             depth += 1
         Loop
 
         Return bestMove
     End Function
 
-    Function DepthLimitedSearch(node(,) As (Boolean, Boolean), depth As Integer) As Integer
+    Function DepthLimitedSearch(node(,) As (Boolean, Boolean), depth As Integer,
+                              cancellationToken As Threading.CancellationToken) As Integer
         Dim bestMove As Integer = -1
         Dim maxScore As Integer = Integer.MinValue
 
-        For col As Integer = 0 To Columns - 1
-            If Not (node(0, col).Item1 Or node(0, col).Item2) Then
-                Dim row As Integer = GetDropRow(col, node)
-                node(row, col).Item2 = True
-                Dim score As Integer = Alphabeta(node, depth, Integer.MinValue, Integer.MaxValue, True)
-                node(row, col).Item2 = False
+        ' Use parallel processing for move evaluation
+        Dim results(Columns - 1) As (Integer, Integer) ' (Column, Score)
+        Parallel.For(0, Columns,
+            Sub(col)
+                If cancellationToken.IsCancellationRequested Then Return
 
-                If score > maxScore Then
-                    maxScore = score
-                    bestMove = col
+                If Not (node(0, col).Item1 Or node(0, col).Item2) Then
+                    Dim localNode(Rows - 1, Columns - 1) As (Boolean, Boolean)
+                    Array.Copy(node, localNode, node.Length)
+
+                    Dim row As Integer = GetDropRow(col, localNode)
+                    localNode(row, col).Item2 = True
+                    Dim score As Integer = Alphabeta(localNode, depth, Integer.MinValue,
+                                                   Integer.MaxValue, True, cancellationToken)
+                    results(col) = (col, score)
                 End If
+            End Sub)
+
+        ' Find the best move from parallel results
+        For Each result In results
+            If result.Item2 > maxScore Then
+                maxScore = result.Item2
+                bestMove = result.Item1
             End If
         Next
 
         Return bestMove
     End Function
 
-    Function Alphabeta(node(,) As (Boolean, Boolean), depth As Integer, alpha As Integer, beta As Integer, maximizingPlayer As Boolean) As Integer
+    Function Alphabeta(node(,) As (Boolean, Boolean), depth As Integer, alpha As Integer,
+                      beta As Integer, maximizingPlayer As Boolean,
+                      cancellationToken As Threading.CancellationToken) As Integer
+        If cancellationToken.IsCancellationRequested Then
+            Return 0
+        End If
+
         Dim value, row As Integer
 
         If depth = 0 Then
@@ -153,11 +185,11 @@
         End If
 
         If CheckWin(node, True) Then
-            Return Integer.MaxValue - (100 - depth)
+            Return Integer.MaxValue - (Integer.MaxValue / 2 - depth)
         End If
 
         If CheckWin(node, False) Then
-            Return Integer.MinValue + (100 - depth)
+            Return Integer.MinValue + (Integer.MaxValue / 2 - depth)
         End If
 
         If CheckTie(node) Then
@@ -173,7 +205,7 @@
 
                     node(row, col).Item1 = True
 
-                    value = Math.Max(value, Alphabeta(node, depth - 1, alpha, beta, False))
+                    value = Math.Max(value, Alphabeta(node, depth - 1, alpha, beta, False, cancellationToken))
 
                     node(row, col).Item1 = False
 
@@ -193,7 +225,7 @@
 
                     node(row, col).Item2 = True
 
-                    value = Math.Min(value, Alphabeta(node, depth - 1, alpha, beta, True))
+                    value = Math.Min(value, Alphabeta(node, depth - 1, alpha, beta, True, cancellationToken))
 
                     node(row, col).Item2 = False
 
