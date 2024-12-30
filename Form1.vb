@@ -1,4 +1,6 @@
-﻿Public Class Connect4
+﻿Imports System.Threading
+
+Public Class Connect4
     Dim Rows As Integer = 6
     Dim Columns As Integer = 7
     Dim Board(Rows - 1, Columns - 1) As (Boolean, Boolean)
@@ -126,7 +128,7 @@
 
     Function DepthLimitedSearch(node(,) As (Boolean, Boolean), depth As Integer) As Integer
         Dim bestMove As Integer = -1
-        Dim maxScore As Integer = Integer.MinValue
+        Dim minScore As Integer = Integer.MaxValue
 
         For col As Integer = 0 To Columns - 1
             If Not (node(0, col).Item1 Or node(0, col).Item2) Then
@@ -135,8 +137,8 @@
                 Dim score As Integer = Alphabeta(node, depth, Integer.MinValue, Integer.MaxValue, True)
                 node(row, col).Item2 = False
 
-                If score > maxScore Then
-                    maxScore = score
+                If score < minScore Then
+                    minScore = score
                     bestMove = col
                 End If
             End If
